@@ -1,6 +1,6 @@
-# AutoVAPT: Automated Vulnerability Assessment Tool
+# Argus-Scan: Automated Vulnerability Assessment Tool
 
-AutoVAPT is a comprehensive, open-source vulnerability assessment tool designed to automate security scanning for web applications and internal services. It orchestrates industry-standard tools (Nmap, Nikto, Nuclei) alongside custom Python-based checks to provide a 360-degree security view.
+Argus-Scan is a comprehensive, open-source vulnerability assessment tool designed to automate security scanning for web applications and internal services. It orchestrates industry-standard tools (Nmap, Nikto, Nuclei) alongside custom Python-based checks to provide a 360-degree security view.
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Python](https://img.shields.io/badge/python-3.11+-yellow.svg)
@@ -69,13 +69,13 @@ Docker bundles Nmap, Nikto, Nuclei, and Python dependencies. No host install nee
 **Build the image:**
 
 ```bash
-docker build -t autovapt .
+docker build -t Argus-Scan .
 ```
 
 **Run a scan:**
 
 ```bash
-docker run --rm -v $(pwd)/reports:/app/reports autovapt --target example.com
+docker run --rm -v $(pwd)/reports:/app/reports Argus-Scan --target example.com
 ```
 
 ### Method 2: Manual Installation (Linux / WSL)
@@ -115,7 +115,7 @@ Runs port scan, security headers, and SSL checks. Does **not** run Nikto or Nucl
 **Docker:**
 
 ```bash
-docker run --rm -v $(pwd)/reports:/app/reports autovapt --target example.com
+docker run --rm -v $(pwd)/reports:/app/reports Argus-Scan --target example.com
 ```
 
 **Native (from repo root):**
@@ -131,7 +131,7 @@ Adds Nikto and Nuclei. Takes longer and requires those tools to be installed (or
 **Docker:**
 
 ```bash
-docker run --rm -v $(pwd)/reports:/app/reports autovapt --target example.com --full
+docker run --rm -v $(pwd)/reports:/app/reports Argus-Scan --target example.com --full
 ```
 
 **Native:**
@@ -161,7 +161,7 @@ python src/vapt.py --target example.com --output ./my-reports
 python src/vapt.py --target example.com --full --verbose
 
 # Skip dependency check (e.g. in Docker or CI)
-docker run --rm -v $(pwd)/reports:/app/reports autovapt --target example.com --no-tool-check
+docker run --rm -v $(pwd)/reports:/app/reports Argus-Scan --target example.com --no-tool-check
 
 # Self-signed or internal HTTPS
 python src/vapt.py --target https://internal.example.com --insecure
@@ -194,7 +194,7 @@ Both include:
 The included `.gitlab-ci.yml` is meant for self-hosted runners with Docker available.
 
 1. **Variables:** In the project’s CI/CD settings, set `TARGET_URL` (e.g. `https://your-app.example.com`). Override or add variables as needed for your pipeline.
-2. **Runner:** Use tags (e.g. `self-hosted`, `shell`) so jobs run on machines that can build and run the AutoVAPT image.
+2. **Runner:** Use tags (e.g. `self-hosted`, `shell`) so jobs run on machines that can build and run the Argus-Scan image.
 3. **Artifacts:** Reports are saved under `reports/` and published as job artifacts (e.g. expire in 1 week).
 4. **Branches:** The default pipeline triggers on `main` and `web`; adjust `only` in `.gitlab-ci.yml` to match your workflow.
 
