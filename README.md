@@ -165,11 +165,19 @@ You can use `./venv/bin/pip install -r requirements.txt` instead; it includes th
 export SCAN_TARGET="https://your-app.example.com"
 ```
 
-**3. Log in and export cookies** (default output: `./nuclei-secret.generated.yaml`; optional second argument for a different path):
+**3. Log in and export cookies** (default output: `./nuclei-secret.generated.yaml`; optional **second argument** is the output path):
 
 ```bash
 ./auth_scan_chrome.sh "$SCAN_TARGET"
 # Or pass the URL as the first argument; if you omit it, `SCAN_TARGET` is used instead.
+```
+
+**Secret file path:** Nuclei only needs a readable YAML path; the filename does not affect the scan. For a **single** target, `./nuclei-secret.generated.yaml` is fine. If you capture cookies for **more than one** host, use a **different file per target** so you do not overwrite another site’s cookies or mount the wrong session in `run_scan.sh`. A simple pattern (same slug rules as report filenames: strip `https://`, replace `/` and `:` with `_`):
+
+```bash
+SLUG="${SCAN_TARGET#https://}"; SLUG="${SLUG#http://}"; SLUG="${SLUG//\//_}"; SLUG="${SLUG//:/_}"
+SECRET_FILE="./nuclei-secret.${SLUG}.yaml"
+./auth_scan_chrome.sh "$SCAN_TARGET" "$SECRET_FILE"
 ```
 
 After you press Enter, `capture_cookies_cdp.py` writes the Nuclei Secret File and (by default) runs a **validation step**: two HTTP GETs from Python (not Chrome)—first **without** a `Cookie` header, then **with** the captured cookies—using an opener that does **not** use a cookie jar, so the anonymous request cannot pick up cookies from the authenticated response.
@@ -180,10 +188,12 @@ After you press Enter, `capture_cookies_cdp.py` writes the Nuclei Secret File an
 
 Validation interprets **401/403**, and also **redirect chains**: many sites return **200** on a login page after redirects; the script compares **final URLs** (login/SSO path, off-site IdP host, `return_to=` query hints, etc.) so “both 200” does not always mean “no difference between anonymous and authenticated.”
 
-**4. Run the scan** (rebuilds the image, mounts the secret, enables verbose output when a secret is present). Use `VAPT_PARALLEL=1` to run independent scan stages in parallel (higher load on the target):
+**4. Run the scan** (rebuilds the image, mounts the secret, enables verbose output when a secret is present). Use `VAPT_PARALLEL=1` to run independent scan stages in parallel (higher load on the target). Pass the **same** YAML path you used in step 3:
 
 ```bash
 VAPT_PARALLEL=1 ./run_scan.sh "$SCAN_TARGET" "./nuclei-secret.generated.yaml"
+# If you set SECRET_FILE above:
+# VAPT_PARALLEL=1 ./run_scan.sh "$SCAN_TARGET" "$SECRET_FILE"
 ```
 
 Instead of the second argument, you can set `NUCLEI_SECRET_FILE` to the YAML path. For CLI-only use inside the container: `python src/vapt.py --target … --full --nuclei-secret-file /path/to/secret.yaml`.
