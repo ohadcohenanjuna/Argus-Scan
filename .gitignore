@@ -51,6 +51,10 @@ test-templates/
 .env
 .env.local
 
+# Nuclei secret files and isolated Chrome profile (auth flow)
+nuclei-secret*.yaml
+.chrome-argus-auth-profile/
+
 # OS
 Thumbs.db
 .DS_Store

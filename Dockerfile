@@ -7,7 +7,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 # Install System Dependencies
 # nmap: Port scanning
-# nikto: Web scanner
+# nikto: Perl app; needs JSON, XML::Writer, SSL (see nikto docs / program/nikto.pl deps)
 # git, curl, unzip: Utilities
 RUN apt-get update && apt-get install -y --no-install-recommends \
     nmap \
@@ -15,6 +15,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     unzip \
     libnet-ssleay-perl \
+    libjson-perl \
+    libxml-writer-perl \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Nikto (Manual Install since not in simple repositories or unreliable)

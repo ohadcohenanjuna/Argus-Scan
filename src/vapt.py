@@ -1,6 +1,8 @@
 import argparse
+import shlex
 import sys
 import shutil
+from concurrent.futures import ProcessPoolExecutor
 from rich.console import Console
 from rich.panel import Panel
 from reporter import Reporter
@@ -31,6 +33,17 @@ def main():
     parser.add_argument("--no-tool-check", action="store_true", help="Ignore missing external tools")
     parser.add_argument("--verbose", "-v", action="store_true", help="Show tool commands and live output")
     parser.add_argument("--insecure", action="store_true", help="Disable TLS verification for HTTP header checks (not recommended for production)")
+    parser.add_argument(
+        "--nuclei-secret-file",
+        default=None,
+        metavar="PATH",
+        help="Nuclei v3.2+ Secret File (YAML) for authenticated scans; passed as --secret-file to nuclei",
+    )
+    parser.add_argument(
+        "--parallel",
+        action="store_true",
+        help="Run independent scan stages in parallel worker processes (more load on the target)",
+    )
 
     args = parser.parse_args()
 
@@ -63,48 +76,89 @@ def main():
             else:
                 reporter.print_success("All dependencies found.")
 
-        # 1. Port Scan
-        reporter.print_status("Starting Port Scan (Nmap)...")
-        port_scanner = PortScanner(args.target)
-        port_res = port_scanner.run()
-        reporter.add_result("PortScanner", port_res)
-        reporter.print_success("Port Scan complete.")
+        # 1–3. Port / Header / SSL  |  4. Nikto / Nuclei (when --full)
+        if args.parallel:
+            import parallel_workers as pw
 
-        # 2. Header Scan
-        reporter.print_status("Starting Security Header Scan...")
-        header_scanner = HeaderScanner(args.target, verify_ssl=not args.insecure)
-        header_res = header_scanner.run()
-        reporter.add_result("HeaderScanner", header_res)
-        reporter.print_success("Header Scan complete.")
+            reporter.print_status(
+                "Starting Port, Header, and SSL scans in parallel (worker processes)..."
+            )
+            with ProcessPoolExecutor(max_workers=3) as pool:
+                fut_port = pool.submit(pw.run_port, args.target)
+                fut_header = pool.submit(pw.run_header, args.target, not args.insecure)
+                fut_ssl = pool.submit(pw.run_ssl, args.target)
+                port_res = fut_port.result()
+                header_res = fut_header.result()
+                ssl_res = fut_ssl.result()
+            reporter.add_result("PortScanner", port_res)
+            reporter.add_result("HeaderScanner", header_res)
+            reporter.add_result("SSLScanner", ssl_res)
+            reporter.print_success("Port, header, and SSL scans complete (parallel).")
 
-        # 3. SSL Scan
-        reporter.print_status("Starting SSL/TLS Inspection...")
-        ssl_scanner = SSLScanner(args.target)
-        ssl_res = ssl_scanner.run()
-        reporter.add_result("SSLScanner", ssl_res)
-        reporter.print_success("SSL Inspection complete.")
-
-        # 4. External Tools (Nikto / Nuclei)
-        if args.full:
-            # Nikto
-            reporter.print_status("Starting Nikto Scan (this may take a while)...")
-            nikto_cmd = "nikto -h {target} -Tuning 123b" 
-            nikto_scanner = ToolScanner(args.target, "nikto", nikto_cmd, verbose=args.verbose)
-            nikto_res = nikto_scanner.run()
-            reporter.add_result("NiktoScanner", nikto_res)
-            reporter.print_success("Nikto Scan complete.")
-
-            # Nuclei
-            reporter.print_status("Starting Nuclei Scan...")
-            # -nc: No Color (prevents ANSI codes in report)
-            nuclei_cmd = "nuclei -u {target} -silent -nc" 
-            nuclei_scanner = ToolScanner(args.target, "nuclei", nuclei_cmd, verbose=args.verbose)
-            nuclei_res = nuclei_scanner.run()
-            reporter.add_result("NucleiScanner", nuclei_res)
-            reporter.print_success("Nuclei Scan complete.")
+            if args.full:
+                reporter.print_status(
+                    "Starting Nikto and Nuclei in parallel (worker processes)..."
+                )
+                with ProcessPoolExecutor(max_workers=2) as pool:
+                    fut_nikto = pool.submit(pw.run_nikto, args.target, args.verbose)
+                    fut_nuclei = pool.submit(
+                        pw.run_nuclei, args.target, args.nuclei_secret_file, args.verbose
+                    )
+                    nikto_res = fut_nikto.result()
+                    nuclei_res = fut_nuclei.result()
+                reporter.add_result("NiktoScanner", nikto_res)
+                reporter.add_result("NucleiScanner", nuclei_res)
+                reporter.print_success("Nikto and Nuclei scans complete (parallel).")
         else:
-            if not missing_tools: # Only suggest full if tools are actually there or we didn't check
-                reporter.print_status("Skipping full vulnerability scans. Use --full to enable.", style="dim")
+            # 1. Port Scan
+            reporter.print_status("Starting Port Scan (Nmap)...")
+            port_scanner = PortScanner(args.target)
+            port_res = port_scanner.run()
+            reporter.add_result("PortScanner", port_res)
+            reporter.print_success("Port Scan complete.")
+
+            # 2. Header Scan
+            reporter.print_status("Starting Security Header Scan...")
+            header_scanner = HeaderScanner(args.target, verify_ssl=not args.insecure)
+            header_res = header_scanner.run()
+            reporter.add_result("HeaderScanner", header_res)
+            reporter.print_success("Header Scan complete.")
+
+            # 3. SSL Scan
+            reporter.print_status("Starting SSL/TLS Inspection...")
+            ssl_scanner = SSLScanner(args.target)
+            ssl_res = ssl_scanner.run()
+            reporter.add_result("SSLScanner", ssl_res)
+            reporter.print_success("SSL Inspection complete.")
+
+            # 4. External Tools (Nikto / Nuclei)
+            if args.full:
+                # Nikto
+                reporter.print_status("Starting Nikto Scan (this may take a while)...")
+                nikto_cmd = "nikto -h {target} -Tuning 123b"
+                nikto_scanner = ToolScanner(args.target, "nikto", nikto_cmd, verbose=args.verbose)
+                nikto_res = nikto_scanner.run()
+                reporter.add_result("NiktoScanner", nikto_res)
+                reporter.print_success("Nikto Scan complete.")
+
+                # Nuclei
+                reporter.print_status("Starting Nuclei Scan...")
+                # -nc: No Color (prevents ANSI codes in report)
+                if args.nuclei_secret_file:
+                    safe_secret = shlex.quote(args.nuclei_secret_file)
+                    nuclei_cmd = f"nuclei -u {{target}} -silent -nc -secret-file {safe_secret}"
+                else:
+                    nuclei_cmd = "nuclei -u {target} -silent -nc"
+                nuclei_scanner = ToolScanner(args.target, "nuclei", nuclei_cmd, verbose=args.verbose)
+                nuclei_res = nuclei_scanner.run()
+                reporter.add_result("NucleiScanner", nuclei_res)
+                reporter.print_success("Nuclei Scan complete.")
+
+        if not args.full:
+            if not missing_tools:
+                reporter.print_status(
+                    "Skipping full vulnerability scans. Use --full to enable.", style="dim"
+                )
 
         # Generate Reports
         reporter.print_status("Generating Reports...")

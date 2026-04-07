@@ -14,6 +14,7 @@ Argus-Scan is a comprehensive, open-source vulnerability assessment tool designe
 - [Project Structure](#-project-structure)
 - [Installation](#-installation)
 - [Usage](#-usage)
+  - [Authenticated scan](#authenticated-scan)
 - [Reporting](#-reporting)
 - [CI/CD Integration](#-cicd-integration)
 - [How It Works](#-how-it-works)
@@ -48,6 +49,9 @@ Argus-Scan is a comprehensive, open-source vulnerability assessment tool designe
 ├── reports/                # Generated reports (created if missing)
 ├── setup.sh                # Setup script for Linux/WSL
 ├── requirements.txt        # Python dependencies
+├── auth_scan_chrome.sh     # Chrome + CDP: log in, export cookies to a Nuclei Secret File
+├── capture_cookies_cdp.py  # Helper used by auth_scan_chrome.sh
+├── run_scan.sh             # Build image and run scan (optional Nuclei secret mount)
 ├── Dockerfile              # Container image definition
 ├── .dockerignore           # Build context exclusions
 └── .gitlab-ci.yml          # GitLab CI pipeline
@@ -140,6 +144,40 @@ docker run --rm -v $(pwd)/reports:/app/reports Argus-Scan --target example.com -
 python src/vapt.py --target example.com --full
 ```
 
+### Authenticated scan
+
+For targets that require a logged-in session, capture cookies from Chrome into a [Nuclei Secret File](https://docs.projectdiscovery.io/opensource/nuclei/authenticated-scans), then run a full Docker scan with that file mounted. `auth_scan_chrome.sh` uses an isolated Chrome profile and `capture_cookies_cdp.py`; `run_scan.sh` builds the image, mounts the secret, and runs `--full` with Nuclei authentication.
+
+**Host prerequisites:** Docker, Chrome or Chromium, and Python 3 for the capture step.
+
+**1. Python dependencies** (minimal set for the cookie capture scripts):
+
+```bash
+python3 -m venv venv && ./venv/bin/pip install pyyaml websocket-client
+```
+
+You can use `./venv/bin/pip install -r requirements.txt` instead; it includes these packages among others.
+
+**2. Set the scan target** (URL you will open and sign in against):
+
+```bash
+export SCAN_TARGET="https://your-app.example.com"
+```
+
+**3. Log in and export cookies** (default output: `./nuclei-secret.generated.yaml`; optional second argument for a different path):
+
+```bash
+./auth_scan_chrome.sh "$SCAN_TARGET"
+```
+
+**4. Run the scan** (rebuilds the image, mounts the secret, enables verbose output when a secret is present). Use `VAPT_PARALLEL=1` to run independent scan stages in parallel (higher load on the target):
+
+```bash
+VAPT_PARALLEL=1 ./run_scan.sh "$SCAN_TARGET" "./nuclei-secret.generated.yaml"
+```
+
+Instead of the second argument, you can set `NUCLEI_SECRET_FILE` to the YAML path. For CLI-only use inside the container: `python src/vapt.py --target … --full --nuclei-secret-file /path/to/secret.yaml`.
+
 ### All options
 
 | Flag | Short | Description |
@@ -150,6 +188,8 @@ python src/vapt.py --target example.com --full
 | `--no-tool-check` | — | Skip checks for Nmap/Nikto/Nuclei. Use when you only want Python-based checks or in CI where tools are guaranteed. |
 | `--verbose` | `-v` | Print tool commands and live tool output during scans. |
 | `--insecure` | — | Disable TLS verification for the security-header HTTP request. Use only for lab or self-signed targets. |
+| `--nuclei-secret-file` | — | Path to a Nuclei v3.2+ Secret File (YAML) for authenticated Nuclei scans; passed through as Nuclei’s `--secret-file`. |
+| `--parallel` | — | Run independent scan stages in parallel worker processes (more load on the target). |
 
 **Examples:**
 
@@ -226,7 +266,7 @@ The included `.gitlab-ci.yml` is meant for self-hosted runners with Docker avail
 ## 🔮 Future Roadmap
 
 - **Deep fuzzing:** Integration with directory brute-forcing tools.
-- **Authentication:** Support for cookies or tokens for authenticated scanning.
+- **Authentication:** Broader options beyond Nuclei Secret Files (for example API tokens or custom headers without Chrome).
 - **API security:** Dedicated checks for REST/GraphQL endpoints.
 
 ---
