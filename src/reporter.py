@@ -16,9 +16,19 @@ class Reporter:
         self.target = ""
         self.findings = []
         self.score = 100
+        self.report_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    def _target_slug(self):
+        return (
+            self.target.replace("http://", "")
+            .replace("https://", "")
+            .replace("/", "_")
+            .replace(":", "_")
+        )
 
     def set_target(self, target):
         self.target = target
+        self.report_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     def add_result(self, module_name, data):
         self.results[module_name] = data
@@ -79,9 +89,8 @@ class Reporter:
 
     def generate_file_report(self):
         grade, color = self.calculate_score()
-        # Sanitize target for filename
-        safe_target = self.target.replace("http://", "").replace("https://", "").replace("/", "_").replace(":", "_")
-        filename = f"vapt_report_{safe_target}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
+        safe_target = self._target_slug()
+        filename = f"vapt_report_{safe_target}_{self.report_ts}.md"
         filepath = os.path.join(self.output_dir, filename)
         
         with open(filepath, "w", encoding="utf-8") as f:
@@ -150,6 +159,100 @@ class Reporter:
                     f.write("\n```\n")
                     f.write("\n</details>\n\n")
 
+    def save_individual_module_reports(self):
+        """Write one text file per scan module under output_dir (same session timestamp as aggregate reports)."""
+        safe_target = self._target_slug()
+        written = []
+
+        def write_module(label, content):
+            name = f"{label}_{safe_target}_{self.report_ts}.txt"
+            path = os.path.join(self.output_dir, name)
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(f"Target: {self.target}\n")
+                f.write(f"Module: {label}\n")
+                f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write("---\n\n")
+                f.write(content)
+            written.append(path)
+
+        if "PortScanner" in self.results:
+            p = self.results["PortScanner"]
+            if p.get("error"):
+                body = f"Error: {p['error']}\n"
+            elif not p.get("valid"):
+                body = "Scan did not complete successfully.\n"
+            else:
+                lines = []
+                for op in p.get("open_ports") or []:
+                    lines.append(
+                        f"Port {op['port']}\t{op['state']}\t{op['name']}\t(severity: {op.get('severity', 'N/A')})"
+                    )
+                if not lines:
+                    lines.append("No open ports in fast scan range, or host unreachable / filtered.")
+                body = "Open ports:\n" + "\n".join(lines) + "\n"
+                if p.get("findings"):
+                    body += "\nFindings:\n"
+                    for fn in p["findings"]:
+                        body += f"  [{fn.get('severity')}] {fn.get('name')}: {fn.get('description', '')}\n"
+            write_module("portscan_nmap", body)
+
+        if "HeaderScanner" in self.results:
+            h = self.results["HeaderScanner"]
+            if h.get("error"):
+                body = f"Error: {h['error']}\n"
+            elif not h.get("valid"):
+                body = "Scan did not complete successfully.\n"
+            else:
+                body = ""
+                miss = h.get("missing") or []
+                if miss:
+                    body += "Missing security headers:\n" + "\n".join(f"  - {m}" for m in miss) + "\n\n"
+                else:
+                    body += "All recommended security headers are present.\n\n"
+                body += "Present (tracked) headers:\n"
+                for k, v in (h.get("present") or {}).items():
+                    body += f"  {k}: {v}\n"
+                if h.get("findings"):
+                    body += "\nFindings:\n"
+                    for fn in h["findings"]:
+                        body += f"  [{fn.get('severity')}] {fn.get('name')}: {fn.get('description', '')}\n"
+            write_module("headers", body)
+
+        if "SSLScanner" in self.results:
+            s = self.results["SSLScanner"]
+            lines = []
+            if s.get("issuer"):
+                lines.append(f"Issuer: {s['issuer']}")
+            if s.get("expiry"):
+                lines.append(f"Expiry: {s['expiry']}")
+            lines.append(f"valid: {s.get('valid')}")
+            if s.get("error"):
+                lines.append(f"Error: {s['error']}")
+            body = "\n".join(lines) + "\n"
+            if s.get("findings"):
+                body += "\nFindings:\n"
+                for fn in s["findings"]:
+                    body += f"  [{fn.get('severity')}] {fn.get('name')}: {fn.get('description', '')}\n"
+            write_module("ssl_tls", body)
+
+        for tool_key, file_label in (
+            ("NiktoScanner", "nikto"),
+            ("NucleiScanner", "nuclei"),
+        ):
+            if tool_key not in self.results:
+                continue
+            t = self.results[tool_key]
+            if t.get("error"):
+                body = f"Error: {t['error']}\n"
+            else:
+                body = t.get("output") or "(no output captured)\n"
+                rc = t.get("return_code")
+                if rc is not None:
+                    body += f"\n---\nexit code: {rc}\n"
+            write_module(file_label, body)
+
+        for path in written:
+            console.print(f"[bold green]Module report saved: {path}[/bold green]")
 
     def generate_html_report(self):
         try:
@@ -160,10 +263,9 @@ class Reporter:
             template = env.get_template('report_template.html')
             
             grade, color = self.calculate_score()
-            
-            # Sanitize target for filename
-            safe_target = self.target.replace("http://", "").replace("https://", "").replace("/", "_").replace(":", "_")
-            filename = f"vapt_report_{safe_target}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
+
+            safe_target = self._target_slug()
+            filename = f"vapt_report_{safe_target}_{self.report_ts}.html"
             filepath = os.path.join(self.output_dir, filename)
             
             html_content = template.render(

@@ -162,6 +162,7 @@ def main():
 
         # Generate Reports
         reporter.print_status("Generating Reports...")
+        reporter.save_individual_module_reports()
         reporter.generate_cli_report()
         reporter.generate_file_report() # Keep Markdown for backup
         reporter.generate_html_report()
