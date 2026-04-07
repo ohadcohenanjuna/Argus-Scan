@@ -50,6 +50,7 @@ def main():
     # Init Reporter
     reporter = Reporter(args.output)
     reporter.set_target(args.target)
+    reporter.set_nuclei_secret_file_used(bool(args.nuclei_secret_file))
     reporter.print_header()
 
     try:

@@ -11,17 +11,23 @@ usage() {
   echo "Usage: $0 <start-url> [output-secret.yaml]"
   echo ""
   echo "Environment:"
+  echo "  SCAN_TARGET       Start URL when the first argument is omitted (handy with run_scan.sh workflows)"
   echo "  CHROME            Path to Chrome/Chromium (default: auto)"
   echo "  CHROME_USER_DATA  Profile directory (default: $SCRIPT_DIR/.chrome-argus-auth-profile)"
   echo "  CHROME_DEBUG_PORT        Port for remote debugging (default: random free port)"
   echo "  CHROME_REMOTE_ALLOW_ORIGINS  DevTools WebSocket allowlist (default: *). Required on Chrome 111+."
+  echo "  AUTH_SCAN_SKIP_VALIDATE  Set to 1 to skip the post-capture HTTP cookie check"
+  echo "  AUTH_SCAN_VALIDATE_URL   Optional URL for validation only (e.g. a protected API path);"
+  echo "                           default is the same as <start-url>. CDP capture still uses <start-url>."
   exit 1
 }
 
-START_URL="${1:-}"
+START_URL="${1:-${SCAN_TARGET:-}}"
 OUT_FILE="${2:-$SCRIPT_DIR/nuclei-secret.generated.yaml}"
 
 if [[ -z "$START_URL" ]]; then
+  echo "Error: no start URL. Pass it as the first argument, or export SCAN_TARGET=https://..." >&2
+  echo "Example: $0 https://docs.example.com/" >&2
   usage
 fi
 
@@ -68,6 +74,8 @@ echo "Opening: $START_URL"
 echo ""
 echo "1. Sign in to the app in the Chrome window."
 echo "2. When finished, return here and press Enter to capture cookies for Nuclei."
+echo "   (After capture, the script GETs a URL with those cookies to sanity-check the session."
+echo "    For SPAs, set AUTH_SCAN_VALIDATE_URL to a path that requires auth, e.g. an API /me endpoint.)"
 echo ""
 
 # Chrome 111+ rejects CDP WebSocket handshakes unless the Origin is allowlisted.
@@ -93,7 +101,14 @@ trap cleanup EXIT
 
 read -r _
 
-"$PYTHON" "$SCRIPT_DIR/capture_cookies_cdp.py" --port "$PORT" --url "$START_URL" -o "$OUT_FILE"
+CAPTURE_ARGS=(--port "$PORT" --url "$START_URL" -o "$OUT_FILE")
+if [[ -n "${AUTH_SCAN_VALIDATE_URL:-}" ]]; then
+  CAPTURE_ARGS+=(--validate-url "$AUTH_SCAN_VALIDATE_URL")
+fi
+if [[ "${AUTH_SCAN_SKIP_VALIDATE:-}" == "1" ]]; then
+  CAPTURE_ARGS+=(--no-validate)
+fi
+"$PYTHON" "$SCRIPT_DIR/capture_cookies_cdp.py" "${CAPTURE_ARGS[@]}"
 
 echo ""
 echo "Secret file: $OUT_FILE"

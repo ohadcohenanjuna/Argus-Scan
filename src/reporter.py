@@ -17,6 +17,7 @@ class Reporter:
         self.findings = []
         self.score = 100
         self.report_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.nuclei_secret_file_used = False
 
     def _target_slug(self):
         return (
@@ -29,6 +30,24 @@ class Reporter:
     def set_target(self, target):
         self.target = target
         self.report_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    def set_nuclei_secret_file_used(self, used: bool):
+        """True when --nuclei-secret-file was passed (Nuclei authenticated cookie/static auth)."""
+        self.nuclei_secret_file_used = bool(used)
+
+    def nuclei_scan_mode_markdown(self) -> str:
+        if "NucleiScanner" not in self.results:
+            return "**Nuclei scan:** Not run (use `--full` to include)."
+        if self.nuclei_secret_file_used:
+            return "**Nuclei scan:** Authenticated (`--nuclei-secret-file` provided). Port, header, SSL, and Nikto checks are still unauthenticated."
+        return "**Nuclei scan:** Unauthenticated. Port, header, SSL, and Nikto checks are unauthenticated."
+
+    def nuclei_scan_mode_plain(self) -> str:
+        if "NucleiScanner" not in self.results:
+            return "Nuclei scan was not run (use --full to include)."
+        if self.nuclei_secret_file_used:
+            return "Nuclei: authenticated (--nuclei-secret-file). Other stages are unauthenticated."
+        return "Nuclei: unauthenticated. Other stages are unauthenticated."
 
     def add_result(self, module_name, data):
         self.results[module_name] = data
@@ -66,6 +85,7 @@ class Reporter:
         grade, color = self.calculate_score()
         
         console.print("\n[bold underline]Scan Summary[/bold underline]")
+        console.print(f"[dim]{self.nuclei_scan_mode_plain()}[/dim]")
         console.print(f"Security Score: [{color}]{self.score}/100 ({grade})[/{color}]")
         
         # Findings Count
@@ -96,6 +116,7 @@ class Reporter:
         with open(filepath, "w", encoding="utf-8") as f:
             f.write(f"# VAPT Report for {self.target}\n\n")
             f.write(f"**Date:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+            f.write(f"{self.nuclei_scan_mode_markdown()}\n\n")
             f.write(f"# Security Score: {self.score}/100 (Grade: {grade})\n\n")
             
             # Exec Summary
@@ -274,7 +295,8 @@ class Reporter:
                 grade=grade,
                 date=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                 findings=self.findings,
-                results=self.results
+                results=self.results,
+                nuclei_scan_mode_plain=self.nuclei_scan_mode_plain(),
             )
             
             with open(filepath, "w", encoding="utf-8") as f:

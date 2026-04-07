@@ -32,7 +32,8 @@ Argus-Scan is a comprehensive, open-source vulnerability assessment tool designe
 | **Security Headers** | Checks for missing or misconfigured HTTP security headers (HSTS, CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy). TLS verification is **on by default**; use `--insecure` only for lab or self-signed targets. |
 | **SSL/TLS Inspection** | Validates certificate expiry and connection to port 443. |
 | **Vulnerability Scanning** | With `--full`, runs Nikto (web vulnerability scanner) and Nuclei (template-based scanning). |
-| **Dashboard Reporting** | Generates an elegant "Intelligence Dossier" HTML report (with dark/light mode toggle), and a detailed Markdown report with severity counts and recommendations. |
+| **Dashboard Reporting** | Generates an elegant "Intelligence Dossier" HTML report (with dark/light mode toggle), and a detailed Markdown report with severity counts and recommendations. Reports state whether **Nuclei** ran with a secret file (`--nuclei-secret-file`); port, header, SSL, and Nikto stages are always unauthenticated. |
+| **Cookie export validation** | After CDP capture, optional HTTP checks validate the session before you run Nuclei: anonymous GET first, then GET with cookies, using an opener **without** a cookie jar. Compares **final URLs** after redirects (not only status codes) so redirect-to-login and SSO flows are recognized when anonymous users would see `/login` or an IdP while 200 responses look identical. |
 | **CI/CD Ready** | GitLab CI configuration for building the image and running scans with reports as artifacts. |
 
 ---
@@ -168,7 +169,16 @@ export SCAN_TARGET="https://your-app.example.com"
 
 ```bash
 ./auth_scan_chrome.sh "$SCAN_TARGET"
+# Or pass the URL as the first argument; if you omit it, `SCAN_TARGET` is used instead.
 ```
+
+After you press Enter, `capture_cookies_cdp.py` writes the Nuclei Secret File and (by default) runs a **validation step**: two HTTP GETs from Python (not Chrome)—first **without** a `Cookie` header, then **with** the captured cookies—using an opener that does **not** use a cookie jar, so the anonymous request cannot pick up cookies from the authenticated response.
+
+- **`AUTH_SCAN_VALIDATE_URL`** — Optional. If set, this URL is used **only** for those validation GETs. Use it when the page you open for CDP (`SCAN_TARGET` / first argument) is public but you want to probe a **protected** path (for example `https://app.example.com/app/dashboard` or `https://docs.example.com/dev`) that redirects anonymous users to login or SSO. If unset, validation uses the same URL as the capture step.
+- **`AUTH_SCAN_SKIP_VALIDATE=1`** — Skip the HTTP validation step after writing the YAML (for unusual TLS, air-gapped checks, etc.).
+- **`capture_cookies_cdp.py`** supports the same behavior directly: `--validate-url <url>`, `--no-validate`.
+
+Validation interprets **401/403**, and also **redirect chains**: many sites return **200** on a login page after redirects; the script compares **final URLs** (login/SSO path, off-site IdP host, `return_to=` query hints, etc.) so “both 200” does not always mean “no difference between anonymous and authenticated.”
 
 **4. Run the scan** (rebuilds the image, mounts the secret, enables verbose output when a secret is present). Use `VAPT_PARALLEL=1` to run independent scan stages in parallel (higher load on the target):
 
@@ -223,7 +233,10 @@ Both include:
 - Security score (0–100) and grade (A–F)
 - Severity counts (CRITICAL, HIGH, MEDIUM, LOW, INFO)
 - Per-finding description, current state, and recommendation
+- **Nuclei scan mode:** whether Nuclei ran **with** a `--nuclei-secret-file` (authenticated Nuclei) or **without**, or Nuclei was **not** run (no `--full`). Other scan stages (port, headers, SSL, Nikto) are always unauthenticated.
 - Raw details for headers, ports, and (when run) Nikto/Nuclei output
+
+The CLI scan summary prints the same Nuclei mode line.
 
 ---
 
@@ -260,6 +273,8 @@ The included `.gitlab-ci.yml` is meant for self-hosted runners with Docker avail
 | **SSL/certificate errors on header check** | Use `--insecure` only for lab or self-signed targets. In production, fix the certificate or use a valid hostname. |
 | **Nikto/Nuclei not run** | Use `--full`. Ensure the tools are on `PATH` or run via the Docker image. |
 | **No or empty reports** | Confirm `--output` is writable and that the run completed (no early exit). Check the path reported in the “HTML report saved to” message. |
+| **Cookie validation failed after capture** | The secret file may still be written; fix the session, point `AUTH_SCAN_VALIDATE_URL` at a path that distinguishes anonymous vs logged-in (after redirects), or set `AUTH_SCAN_SKIP_VALIDATE=1`. See messages from `capture_cookies_cdp.py` for details. |
+| **`auth_scan_chrome.sh` shows usage with no URL** | Pass the start URL as the first argument **or** `export SCAN_TARGET=...` before running the script. |
 
 ---
 
