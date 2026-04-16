@@ -55,9 +55,9 @@ def main():
         help="Nikto: pass -C all (force CGI checks in all possible dirs; slower and heavier; default skips CGI tests when no CGI dirs are found)",
     )
     parser.add_argument(
-        "--lenient-exit",
+        "--strict-exit",
         action="store_true",
-        help="Exit 0 even when a scan stage failed or was incomplete (default: exit 1 if any module reports valid=false)",
+        help="Exit with status 1 if any scan stage failed or was incomplete (default: exit 0 after reports; failures are listed in the dossier)",
     )
     parser.add_argument(
         "--site-manifest",
@@ -107,14 +107,18 @@ def main():
 
     url_list_path = None
     if args.site_manifest:
-        from site_manifest import load_site_manifest, merge_primary_target, write_url_list_file
+        from site_manifest import SiteManifestError, load_site_manifest, merge_primary_target, write_url_list_file
 
         man_path = (
             args.site_manifest
             if os.path.isabs(args.site_manifest)
             else os.path.abspath(args.site_manifest)
         )
-        urls, _meta = load_site_manifest(man_path, fallback_base=args.target)
+        try:
+            urls, _meta = load_site_manifest(man_path, fallback_base=args.target)
+        except SiteManifestError as e:
+            reporter.print_error(str(e))
+            sys.exit(1)
         if not args.no_site_manifest_include_primary:
             urls = merge_primary_target(urls, args.target)
         slug = reporter._target_slug()
@@ -370,10 +374,10 @@ def main():
         reporter.generate_html_report()
         
         reporter.print_success("Scan Verification Complete.")
-        if reporter.had_execution_failure() and not args.lenient_exit:
+        if reporter.had_execution_failure() and args.strict_exit:
             reporter.print_status(
                 "Exiting with status 1: one or more stages did not complete successfully "
-                "(see logs under the session directory). Use --lenient-exit to always exit 0 after reports.",
+                "(see the dossier and logs under the session directory). Omit --strict-exit to exit 0 after reports.",
                 style="yellow",
             )
             sys.exit(1)

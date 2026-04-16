@@ -13,7 +13,7 @@ if [ -z "$TARGET" ]; then
     echo "Or set NUCLEI_SECRET_FILE instead of the second argument."
     echo "Parallel worker processes: VAPT_PARALLEL=1 $0 ..."
     echo "Nikto force CGI dir checks: NIKTO_CGI_ALL=1 $0 ... (slower)"
-    echo "Exit 0 even if a stage failed: LENIENT_EXIT=1 $0 ..."
+    echo "CI: fail if any stage incomplete: STRICT_EXIT=1 $0 ..."
     echo "Site manifest: SITE_MANIFEST=./my-site.yaml $0 https://example.com"
     echo "ZAP JSON/HTML in reports/ (from scripts/run_zap_baseline.sh): set RUN_ZAP=1 or pass files manually via --zap-report-json (see README)."
     exit 1
@@ -31,8 +31,8 @@ fi
 if [ "${NIKTO_CGI_ALL:-0}" = "1" ]; then
     EXTRA_ARGS+=(--nikto-cgi-all)
 fi
-if [ "${LENIENT_EXIT:-0}" = "1" ]; then
-    EXTRA_ARGS+=(--lenient-exit)
+if [ "${STRICT_EXIT:-0}" = "1" ]; then
+    EXTRA_ARGS+=(--strict-exit)
 fi
 
 if [ -n "$SECRET" ]; then
@@ -44,14 +44,23 @@ fi
 
 if [ -n "$SITE_MANIFEST" ]; then
     MAN_ABS="$(cd "$(dirname "$SITE_MANIFEST")" && pwd)/$(basename "$SITE_MANIFEST")"
+    if [ -d "$MAN_ABS" ]; then
+        echo "SITE_MANIFEST must be a YAML file, not a directory: $MAN_ABS" >&2
+        exit 1
+    fi
+    if [ ! -f "$MAN_ABS" ]; then
+        echo "SITE_MANIFEST must exist on the host before Docker runs: $MAN_ABS" >&2
+        echo "If the path is missing, Docker creates a directory at the mount point and the container will fail." >&2
+        exit 1
+    fi
     DOCKER_ARGS+=(-v "$MAN_ABS:/app/site-manifest.yaml:ro")
     EXTRA_ARGS+=(--site-manifest /app/site-manifest.yaml)
 fi
 
-# Optional: run ZAP baseline first (requires Docker; official image — not deprecated owasp/zap2docker-stable)
+# Optional: run ZAP baseline first (requires Docker; official image - not deprecated owasp/zap2docker-stable)
 ZAP_DOCKER_IMAGE="${ZAP_DOCKER_IMAGE:-ghcr.io/zaproxy/zaproxy:stable}"
 if [ "${RUN_ZAP:-0}" = "1" ]; then
-    echo "Running ZAP baseline ($ZAP_DOCKER_IMAGE) → $REPORTS_VOL (zap-report.json, zap-report.html)"
+    echo "Running ZAP baseline ($ZAP_DOCKER_IMAGE) -> $REPORTS_VOL (zap-report.json, zap-report.html)"
     docker run --rm -v "$REPORTS_VOL:/zap/wrk/:rw" "$ZAP_DOCKER_IMAGE" \
         zap-baseline.py -t "$TARGET" -J zap-report.json -r zap-report.html
     EXTRA_ARGS+=(--zap-report-json /app/reports/zap-report.json)
@@ -81,7 +90,7 @@ if [ -z "$report_file" ]; then
 fi
 
 if [ -z "$report_file" ] || [ ! -f "$report_file" ]; then
-    echo "Report file not found under reports/ for this target (look for vapt_report_${SAFE_SLUG}_*.html)."
+    echo "Report file not found under reports/ for this target. Expected name pattern: vapt_report_${SAFE_SLUG}_*.html"
     exit 1
 fi
 

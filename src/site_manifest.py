@@ -32,6 +32,14 @@ def load_site_manifest(
     Returns (absolute_urls, metadata_rows for reporting).
     Each metadata row: url, category, note, requires_auth.
     """
+    if not os.path.exists(path):
+        raise SiteManifestError(f"Site manifest not found: {path}")
+    if os.path.isdir(path):
+        raise SiteManifestError(
+            f"Site manifest path is a directory, not a file ({path!r}). "
+            "With Docker, a missing or wrong host bind path often causes Docker to create an empty directory "
+            "at the container path; use an existing YAML file and `-v /host/file.yaml:/app/site-manifest.yaml:ro`."
+        )
     with open(path, encoding="utf-8") as f:
         data = yaml.safe_load(f)
     if not isinstance(data, dict):

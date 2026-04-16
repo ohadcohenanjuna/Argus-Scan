@@ -147,6 +147,33 @@
         }
 
         /* Stats Section */
+        /* Incomplete / failed stages (valid=false); dossier still generated */
+        .stage-warnings {
+            border: 1px solid var(--high);
+            border-left: 4px solid var(--high);
+            background: var(--bg-offset);
+            padding: 20px 24px;
+            margin-bottom: 48px;
+            font-family: var(--font-mono);
+            font-size: 0.85rem;
+        }
+
+        .stage-warnings h2 {
+            font-family: var(--font-display);
+            font-size: 1.25rem;
+            margin-bottom: 12px;
+            color: var(--high);
+        }
+
+        .stage-warnings ul {
+            margin: 8px 0 0 1.25rem;
+            line-height: 1.5;
+        }
+
+        .stage-warnings li {
+            margin-bottom: 8px;
+        }
+
         .stats-wrapper {
             display: grid;
             grid-template-columns: 1fr 2fr;
@@ -678,6 +705,18 @@
                 <button id="themeToggle" class="theme-toggle">☀ Light Mode</button>
             </div>
         </header>
+
+        {% if stage_failures %}
+        <div class="stage-warnings">
+            <h2>Scan stage execution</h2>
+            <p>One or more stages did not complete successfully. Details below and in session <code>logs/</code>. The rest of this dossier still reflects completed stages.</p>
+            <ul>
+                {% for row in stage_failures %}
+                <li><strong>{{ row.label }}:</strong> {{ row.detail }}</li>
+                {% endfor %}
+            </ul>
+        </div>
+        {% endif %}
 
         <!-- STATS -->
         <div class="stats-wrapper">

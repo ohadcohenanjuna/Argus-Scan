@@ -177,7 +177,7 @@ From the repo root, [`run_scan.sh`](run_scan.sh) builds the `argus-scan` image, 
 | `$2` or `NUCLEI_SECRET_FILE` | Optional path to a Nuclei secret YAML (mounted as `/app/nuclei-secret.yaml`) |
 | `VAPT_PARALLEL=1` | Run port/header/SSL and Nikto/Nuclei stages in parallel (more load on the target) |
 | `NIKTO_CGI_ALL=1` | Nikto only: add `-C all` (force CGI checks everywhere; slower, use for legacy/CGI-heavy targets) |
-| `LENIENT_EXIT=1` | Pass `--lenient-exit`: exit **0** even when a stage failed (default is exit **1** if any module did not complete) |
+| `STRICT_EXIT=1` | Pass `--strict-exit`: exit **1** if any stage failed (default is exit **0** after reports; failures are listed in the dossier) |
 | `SITE_MANIFEST=./path.yaml` | Mount a [site manifest](#site-manifest-curated-urls) as `/app/site-manifest.yaml` |
 | `RUN_ZAP=1` | Run **OWASP ZAP baseline** into `./reports/` first, then pass ZAP JSON/HTML into Argus |
 

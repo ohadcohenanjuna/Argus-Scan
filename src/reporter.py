@@ -75,6 +75,30 @@ class Reporter:
                 return True
         return False
 
+    def failed_stage_rows(self) -> list[dict[str, str]]:
+        """Rows for HTML/CLI: modules with valid=False and a short reason."""
+        labels = {
+            "PortScanner": "Port scan (nmap)",
+            "HeaderScanner": "Header scan",
+            "SSLScanner": "SSL/TLS",
+            "NiktoScanner": "Nikto",
+            "NucleiScanner": "Nuclei",
+            "ZAPScanner": "ZAP (ingested)",
+        }
+        rows: list[dict[str, str]] = []
+        for key, data in self.results.items():
+            if not isinstance(data, dict) or data.get("valid") is not False:
+                continue
+            err = data.get("error")
+            if err:
+                detail = str(err)
+            else:
+                detail = (
+                    "Did not complete successfully; see Raw Module Data below and session logs/."
+                )
+            rows.append({"key": key, "label": labels.get(key, key), "detail": detail})
+        return rows
+
     def calculate_score(self):
         # Base 100, deduct
         deduction = 0
@@ -124,6 +148,12 @@ class Reporter:
                 style = "red" if sev in ["CRITICAL", "HIGH"] else "yellow"
                 table.add_row(f"[{style}]{sev}[/{style}]", str(count))
         console.print(table)
+
+        failed = self.failed_stage_rows()
+        if failed:
+            console.print("\n[yellow]Stage execution notes (reports still generated):[/yellow]")
+            for row in failed:
+                console.print(f"  [yellow]- {row['label']}: {row['detail']}[/yellow]")
         
         if not self.findings:
              console.print("[green]No specific vulnerabilities matched known signatures.[/green]")
@@ -148,6 +178,17 @@ class Reporter:
                 "*Score combines Python header/SSL/port checks and parsed **Nuclei JSONL** and **ZAP JSON** "
                 "findings (severity-weighted). Raw Nikto output is not scored.*\n\n"
             )
+
+            failed = self.failed_stage_rows()
+            if failed:
+                f.write("## Scan stage status\n\n")
+                f.write(
+                    "Some stages reported **incomplete or failed** execution (see Raw Module Data and `logs/`). "
+                    "The dossier was still generated.\n\n"
+                )
+                for row in failed:
+                    f.write(f"- **{row['label']}:** {row['detail']}\n")
+                f.write("\n")
             
             # Exec Summary
             f.write("## Executive Summary\n")
@@ -341,6 +382,7 @@ class Reporter:
                 findings=self.findings,
                 results=self.results,
                 nuclei_scan_mode_plain=self.nuclei_scan_mode_plain(),
+                stage_failures=self.failed_stage_rows(),
             )
             
             with open(filepath, "w", encoding="utf-8") as f:
