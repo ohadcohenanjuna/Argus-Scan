@@ -1,0 +1,29 @@
+# Curated URLs for Nuclei `-list` (via Argus `--site-manifest`).
+# Copy and edit for your app; mount into Docker or pass a host path.
+#
+# base_url: used to resolve relative `path` entries (optional if every entry is a full URL).
+base_url: https://example.com/
+
+urls:
+  # String form: path relative to base_url
+  - /
+
+  - path: /login
+    category: login
+    note: Authentication entry point
+
+  - path: /auth/forgot-password
+    category: password_reset
+
+  - path: /search
+    category: search
+    note: "Add query params your app uses, e.g. ?q=test"
+
+  - url: https://example.com/contact
+    category: form
+    note: Public form (CSRF / validation)
+
+  - path: /app/dashboard
+    category: other
+    requires_auth: true
+    note: Requires session; use Nuclei --nuclei-secret-file with captured cookies

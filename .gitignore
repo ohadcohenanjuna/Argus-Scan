@@ -69,6 +69,8 @@ Thumbs.db
 *.bak
 *.cache
 
+reports/
+
 LINKEDIN_POST.md
 PUSH_CHECKLIST.md
 GITHUB_GUIDE.md

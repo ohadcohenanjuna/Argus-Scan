@@ -8,7 +8,7 @@ from rich.markdown import Markdown
 console = Console()
 
 class Reporter:
-    def __init__(self, output_dir="reports"):
+    def __init__(self, output_dir="reports", scan_ts: str | None = None):
         self.output_dir = output_dir
         if not os.path.exists(self.output_dir):
             os.makedirs(self.output_dir)
@@ -16,20 +16,28 @@ class Reporter:
         self.target = ""
         self.findings = []
         self.score = 100
-        self.report_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.report_ts = scan_ts or datetime.now().strftime("%Y%m%d_%H%M%S")
         self.nuclei_secret_file_used = False
+        self.site_manifest_url_count: int | None = None
 
-    def _target_slug(self):
+    def set_site_manifest_url_count(self, n: int | None):
+        """Number of URLs from --site-manifest (for report banner)."""
+        self.site_manifest_url_count = n
+
+    @staticmethod
+    def slug_from_target(target: str) -> str:
         return (
-            self.target.replace("http://", "")
+            target.replace("http://", "")
             .replace("https://", "")
             .replace("/", "_")
             .replace(":", "_")
         )
 
+    def _target_slug(self):
+        return self.slug_from_target(self.target)
+
     def set_target(self, target):
         self.target = target
-        self.report_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     def set_nuclei_secret_file_used(self, used: bool):
         """True when --nuclei-secret-file was passed (Nuclei authenticated cookie/static auth)."""
@@ -38,21 +46,34 @@ class Reporter:
     def nuclei_scan_mode_markdown(self) -> str:
         if "NucleiScanner" not in self.results:
             return "**Nuclei scan:** Not run (use `--full` to include)."
+        extra = ""
+        if self.site_manifest_url_count is not None:
+            extra = f" **Site manifest:** {self.site_manifest_url_count} URL(s) passed to Nuclei (`-list`)."
         if self.nuclei_secret_file_used:
-            return "**Nuclei scan:** Authenticated (`--nuclei-secret-file` provided). Port, header, SSL, and Nikto checks are still unauthenticated."
-        return "**Nuclei scan:** Unauthenticated. Port, header, SSL, and Nikto checks are unauthenticated."
+            return "**Nuclei scan:** Authenticated (`--nuclei-secret-file` provided). Port, header, SSL, and Nikto checks are still unauthenticated." + extra
+        return "**Nuclei scan:** Unauthenticated. Port, header, SSL, and Nikto checks are unauthenticated." + extra
 
     def nuclei_scan_mode_plain(self) -> str:
         if "NucleiScanner" not in self.results:
             return "Nuclei scan was not run (use --full to include)."
+        extra = ""
+        if self.site_manifest_url_count is not None:
+            extra = f" Nuclei site manifest: {self.site_manifest_url_count} URLs."
         if self.nuclei_secret_file_used:
-            return "Nuclei: authenticated (--nuclei-secret-file). Other stages are unauthenticated."
-        return "Nuclei: unauthenticated. Other stages are unauthenticated."
+            return "Nuclei: authenticated (--nuclei-secret-file). Other stages are unauthenticated." + extra
+        return "Nuclei: unauthenticated. Other stages are unauthenticated." + extra
 
     def add_result(self, module_name, data):
         self.results[module_name] = data
         if "findings" in data:
             self.findings.extend(data["findings"])
+
+    def had_execution_failure(self) -> bool:
+        """True if any module reported valid=False (tool error, unreachable target, scan abandoned, etc.)."""
+        for _name, data in self.results.items():
+            if isinstance(data, dict) and data.get("valid") is False:
+                return True
+        return False
 
     def calculate_score(self):
         # Base 100, deduct
@@ -117,7 +138,16 @@ class Reporter:
             f.write(f"# VAPT Report for {self.target}\n\n")
             f.write(f"**Date:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
             f.write(f"{self.nuclei_scan_mode_markdown()}\n\n")
+            if "ZAPScanner" in self.results:
+                f.write(
+                    "**ZAP:** Report data included (see findings and Raw Module Data). "
+                    "ZAP is a separate DAST stage; tune scope and policies for production.\n\n"
+                )
             f.write(f"# Security Score: {self.score}/100 (Grade: {grade})\n\n")
+            f.write(
+                "*Score combines Python header/SSL/port checks and parsed **Nuclei JSONL** and **ZAP JSON** "
+                "findings (severity-weighted). Raw Nikto output is not scored.*\n\n"
+            )
             
             # Exec Summary
             f.write("## Executive Summary\n")
@@ -172,9 +202,15 @@ class Reporter:
                 f.write("\n</details>\n\n")
 
             # Tool Output
-            for tool in ["NiktoScanner", "NucleiScanner"]:
+            for tool in ["NiktoScanner", "NucleiScanner", "ZAPScanner"]:
                 if tool in self.results:
                     f.write(f"<details><summary><b>{tool} Output</b></summary>\n\n")
+                    if tool == "ZAPScanner":
+                        z = self.results[tool]
+                        if z.get("json_path"):
+                            f.write(f"**JSON report path:** `{z['json_path']}`\n\n")
+                        if z.get("html_path"):
+                            f.write(f"**HTML report path:** `{z['html_path']}`\n\n")
                     f.write("```\n")
                     f.write(self.results[tool].get("output", "No Output"))
                     f.write("\n```\n")
@@ -259,6 +295,7 @@ class Reporter:
         for tool_key, file_label in (
             ("NiktoScanner", "nikto"),
             ("NucleiScanner", "nuclei"),
+            ("ZAPScanner", "zap"),
         ):
             if tool_key not in self.results:
                 continue
@@ -267,6 +304,13 @@ class Reporter:
                 body = f"Error: {t['error']}\n"
             else:
                 body = t.get("output") or "(no output captured)\n"
+                if tool_key == "NucleiScanner" and t.get("jsonl_path"):
+                    body += f"\nNuclei JSONL: {t['jsonl_path']}\n"
+                if tool_key == "ZAPScanner":
+                    if t.get("json_path"):
+                        body += f"\nZAP JSON: {t['json_path']}\n"
+                    if t.get("html_path"):
+                        body += f"\nZAP HTML: {t['html_path']}\n"
                 rc = t.get("return_code")
                 if rc is not None:
                     body += f"\n---\nexit code: {rc}\n"

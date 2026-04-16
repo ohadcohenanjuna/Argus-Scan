@@ -1,6 +1,6 @@
 # Argus-Scan: Automated Vulnerability Assessment Tool
 
-Argus-Scan is a comprehensive, open-source vulnerability assessment tool designed to automate security scanning for web applications and internal services. It orchestrates industry-standard tools (Nmap, Nikto, Nuclei) alongside custom Python-based checks to provide a 360-degree security view.
+Argus-Scan is an open-source vulnerability assessment tool for web applications and internal services. It combines **Nmap**, **Nikto**, and **Nuclei** with Python checks (HTTP security headers, TLS). Optional features include a **YAML site manifest** so Nuclei scans multiple curated URLs (`-list`), **Nuclei JSONL** parsing into scored findings, and ingestion of **OWASP ZAP** baseline JSON/HTML for DAST results in the same report. See [EXTENDED_SCANNING.md](EXTENDED_SCANNING.md) for score semantics, production safety, and complementary tools (Katana, httpx, and similar).
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Python](https://img.shields.io/badge/python-3.11+-yellow.svg)
@@ -13,9 +13,14 @@ Argus-Scan is a comprehensive, open-source vulnerability assessment tool designe
 - [Features](#-features)
 - [Project Structure](#-project-structure)
 - [Installation](#-installation)
+- [Quick start (manifest + scan)](quick-start.md)
 - [Usage](#-usage)
+  - [Using run_scan.sh](#using-run_scansh)
+  - [Site manifest (curated URLs)](#site-manifest-curated-urls)
+  - [OWASP ZAP reports](#owasp-zap-reports)
   - [Authenticated scan](#authenticated-scan)
 - [Reporting](#-reporting)
+- [Extended scanning (manifest, ZAP, other tools)](EXTENDED_SCANNING.md)
 - [CI/CD Integration](#-cicd-integration)
 - [How It Works](#-how-it-works)
 - [Troubleshooting](#-troubleshooting)
@@ -33,6 +38,9 @@ Argus-Scan is a comprehensive, open-source vulnerability assessment tool designe
 | **SSL/TLS Inspection** | Validates certificate expiry and connection to port 443. |
 | **Vulnerability Scanning** | With `--full`, runs Nikto (web vulnerability scanner) and Nuclei (template-based scanning). |
 | **Dashboard Reporting** | Generates an elegant "Intelligence Dossier" HTML report (with dark/light mode toggle), and a detailed Markdown report with severity counts and recommendations. Reports state whether **Nuclei** ran with a secret file (`--nuclei-secret-file`); port, header, SSL, and Nikto stages are always unauthenticated. |
+| **Nuclei JSONL findings** | Nuclei exports JSONL (`-jle`); Argus parses severities into the scored findings list (not only raw text). |
+| **Site manifest** | Optional YAML (`--site-manifest`) lists curated URLs; Nuclei runs with `-list` for broader coverage (see `examples/site-manifest.example.yaml`). |
+| **ZAP reports** | Optional `--zap-report-json` / `--zap-report-html` ingest OWASP ZAP baseline output; see [EXTENDED_SCANNING.md](EXTENDED_SCANNING.md). |
 | **Cookie export validation** | After CDP capture, optional HTTP checks validate the session before you run Nuclei: anonymous GET first, then GET with cookies, using an opener **without** a cookie jar. Compares **final URLs** after redirects (not only status codes) so redirect-to-login and SSO flows are recognized when anonymous users would see `/login` or an IdP while 200 responses look identical. |
 | **CI/CD Ready** | GitLab CI configuration for building the image and running scans with reports as artifacts. |
 
@@ -46,12 +54,22 @@ Argus-Scan is a comprehensive, open-source vulnerability assessment tool designe
 │   ├── vapt.py             # Main entrypoint and CLI
 │   ├── scanners.py         # Scanner modules (Port, Header, SSL, Tool)
 │   ├── reporter.py         # Reporting logic (CLI, HTML, Markdown)
+│   ├── nuclei_runner.py    # Nuclei subprocess + JSONL export (`-jle`)
+│   ├── nuclei_parse.py     # Parse Nuclei JSONL into scored findings
+│   ├── site_manifest.py    # YAML manifest → URL list for Nuclei `-list`
+│   ├── zap_parse.py        # Parse ZAP traditional JSON into findings
+│   ├── parallel_workers.py # Multiprocessing helpers for `--parallel`
+│   ├── parallel_ui.py      # Rich live table for parallel job status
 │   └── templates/          # Jinja2 HTML report template
+├── tests/                  # Unit tests (e.g. parsers); run in Docker: see below
 ├── reports/                # Generated reports (created if missing)
 ├── setup.sh                # Setup script for Linux/WSL
 ├── requirements.txt        # Python dependencies
 ├── auth_scan_chrome.sh     # Chrome + CDP: log in, export cookies to a Nuclei Secret File
 ├── capture_cookies_cdp.py  # Helper used by auth_scan_chrome.sh
+├── examples/               # Example site manifest for Nuclei -list
+├── scripts/run_zap_baseline.sh  # Optional: ZAP baseline → reports dir
+├── EXTENDED_SCANNING.md    # Manifests, ZAP, score semantics, other OSS tools
 ├── run_scan.sh             # Build image and run scan (optional Nuclei secret mount)
 ├── Dockerfile              # Container image definition
 ├── .dockerignore           # Build context exclusions
@@ -71,17 +89,19 @@ Argus-Scan is a comprehensive, open-source vulnerability assessment tool designe
 
 Docker bundles Nmap, Nikto, Nuclei, and Python dependencies. No host install needed.
 
-**Build the image:**
+**Build the image** (tag matches `run_scan.sh`; use any name you prefer):
 
 ```bash
-docker build -t Argus-Scan .
+docker build -t argus-scan .
 ```
 
 **Run a scan:**
 
 ```bash
-docker run --rm -v $(pwd)/reports:/app/reports Argus-Scan --target example.com
+docker run --rm -v "$(pwd)/reports:/app/reports" argus-scan:latest --target https://example.com
 ```
+
+The image entrypoint is `python src/vapt.py`. On some setups you may omit `:latest`.
 
 ### Method 2: Manual Installation (Linux / WSL)
 
@@ -120,7 +140,7 @@ Runs port scan, security headers, and SSL checks. Does **not** run Nikto or Nucl
 **Docker:**
 
 ```bash
-docker run --rm -v $(pwd)/reports:/app/reports Argus-Scan --target example.com
+docker run --rm -v "$(pwd)/reports:/app/reports" argus-scan:latest --target https://example.com
 ```
 
 **Native (from repo root):**
@@ -133,10 +153,12 @@ python src/vapt.py --target example.com
 
 Adds Nikto and Nuclei. Takes longer and requires those tools to be installed (or use Docker).
 
+The **Docker image** runs `nuclei -update-templates` during the build, so Nuclei’s community templates live under `/root/nuclei-templates` in the image and a full scan does not spend its first run downloading them (the image is larger accordingly). On a **native** install, run `nuclei -update-templates` once after installing the binary if you see an install message in `logs/nuclei.log`. For a **custom or air-gapped** template tree, mount it over that path (for example `-v /path/on/host/nuclei-templates:/root/nuclei-templates:ro`).
+
 **Docker:**
 
 ```bash
-docker run --rm -v $(pwd)/reports:/app/reports Argus-Scan --target example.com --full
+docker run --rm -v "$(pwd)/reports:/app/reports" argus-scan:latest --target https://example.com --full
 ```
 
 **Native:**
@@ -144,6 +166,64 @@ docker run --rm -v $(pwd)/reports:/app/reports Argus-Scan --target example.com -
 ```bash
 python src/vapt.py --target example.com --full
 ```
+
+### Using run_scan.sh
+
+From the repo root, [`run_scan.sh`](run_scan.sh) builds the `argus-scan` image, runs a **full** scan, and opens the latest HTML report (macOS `open`).
+
+| Input / env | Purpose |
+|-------------|---------|
+| `$1` | Target URL (required) |
+| `$2` or `NUCLEI_SECRET_FILE` | Optional path to a Nuclei secret YAML (mounted as `/app/nuclei-secret.yaml`) |
+| `VAPT_PARALLEL=1` | Run port/header/SSL and Nikto/Nuclei stages in parallel (more load on the target) |
+| `NIKTO_CGI_ALL=1` | Nikto only: add `-C all` (force CGI checks everywhere; slower, use for legacy/CGI-heavy targets) |
+| `LENIENT_EXIT=1` | Pass `--lenient-exit`: exit **0** even when a stage failed (default is exit **1** if any module did not complete) |
+| `SITE_MANIFEST=./path.yaml` | Mount a [site manifest](#site-manifest-curated-urls) as `/app/site-manifest.yaml` |
+| `RUN_ZAP=1` | Run **OWASP ZAP baseline** into `./reports/` first, then pass ZAP JSON/HTML into Argus |
+
+If `reports/zap-report.json` already exists (for example from a previous [`scripts/run_zap_baseline.sh`](scripts/run_zap_baseline.sh) run), it is picked up automatically unless ZAP args were already added.
+
+```bash
+chmod +x run_scan.sh
+./run_scan.sh https://example.com
+VAPT_PARALLEL=1 SITE_MANIFEST=./my-site.yaml ./run_scan.sh https://example.com ./nuclei-secret.generated.yaml
+RUN_ZAP=1 ./run_scan.sh https://example.com
+```
+
+### Site manifest (curated URLs)
+
+For login, search, forms, and other routes Nuclei should hit beyond a single `--target`, maintain a YAML file and pass **`--site-manifest`** (requires **`--full`**). Argus expands paths, writes a plain-text URL list under `reports/`, and runs Nuclei with **`-list`**. By default the primary `--target` URL is prepended to that list; use **`--no-site-manifest-include-primary`** to disable.
+
+Copy and edit [`examples/site-manifest.example.yaml`](examples/site-manifest.example.yaml). Combine with **`--nuclei-secret-file`** for authenticated pages.
+
+**Docker example:**
+
+```bash
+docker run --rm \
+  -v "$(pwd)/reports:/app/reports" \
+  -v "$(pwd)/my-site.yaml:/app/site-manifest.yaml:ro" \
+  argus-scan:latest \
+  --target https://example.com --full \
+  --site-manifest /app/site-manifest.yaml
+```
+
+### OWASP ZAP reports
+
+ZAP is **not** installed inside the Argus image. Run [**ZAP baseline**](https://www.zaproxy.org/docs/docker/baseline/) in a separate container and point Argus at the generated reports so alerts are **parsed into the same score** (traditional JSON from `zap-baseline.py -J`).
+
+The scripts use the current official image **`ghcr.io/zaproxy/zaproxy:stable`** (the old `owasp/zap2docker-stable` image is deprecated and no longer pullable). Override with **`ZAP_DOCKER_IMAGE`** if needed (for example `zaproxy/zap-stable` on Docker Hub).
+
+```bash
+./scripts/run_zap_baseline.sh https://example.com ./reports
+docker run --rm -v "$(pwd)/reports:/app/reports" argus-scan:latest \
+  --target https://example.com --full \
+  --zap-report-json /app/reports/zap-report.json \
+  --zap-report-html /app/reports/zap-report.html
+```
+
+Or use **`RUN_ZAP=1`** with [`run_scan.sh`](#using-run_scansh) so ZAP runs first and Argus consumes `./reports/zap-report.json`.
+
+Details: [EXTENDED_SCANNING.md](EXTENDED_SCANNING.md).
 
 ### Authenticated scan
 
@@ -209,7 +289,11 @@ Instead of the second argument, you can set `NUCLEI_SECRET_FILE` to the YAML pat
 | `--verbose` | `-v` | Print tool commands and live tool output during scans. |
 | `--insecure` | — | Disable TLS verification for the security-header HTTP request. Use only for lab or self-signed targets. |
 | `--nuclei-secret-file` | — | Path to a Nuclei v3.2+ Secret File (YAML) for authenticated Nuclei scans; passed through as Nuclei’s `--secret-file`. |
-| `--parallel` | — | Run independent scan stages in parallel worker processes (more load on the target). |
+| `--parallel` | — | Run independent scan stages in parallel worker processes (more load on the target). Tool stdout is written to **`logs/*.log`** under the session directory; the console shows a short job status table. **`--verbose` does not stream tools to the console in parallel mode** (use `tail -f` on the log files). |
+| `--site-manifest` | — | YAML file of URLs/paths; Nuclei uses `-list` (see `examples/site-manifest.example.yaml`). |
+| `--no-site-manifest-include-primary` | — | Do not prepend `--target` to the manifest URL list. |
+| `--zap-report-json` | — | Path to ZAP traditional JSON (`zap-baseline.py -J`); findings are parsed into the dossier score. |
+| `--zap-report-html` | — | Optional ZAP HTML path for cross-reference in the report (not parsed). |
 
 **Examples:**
 
@@ -221,30 +305,45 @@ python src/vapt.py --target example.com --output ./my-reports
 python src/vapt.py --target example.com --full --verbose
 
 # Skip dependency check (e.g. in Docker or CI)
-docker run --rm -v $(pwd)/reports:/app/reports Argus-Scan --target example.com --no-tool-check
+docker run --rm -v "$(pwd)/reports:/app/reports" argus-scan:latest --target https://example.com --no-tool-check
+
+# Full scan + site manifest + ZAP reports (after generating zap-report.json in reports/)
+docker run --rm -v "$(pwd)/reports:/app/reports" \
+  -v "$(pwd)/manifest.yaml:/app/site-manifest.yaml:ro" \
+  argus-scan:latest --target https://example.com --full \
+  --site-manifest /app/site-manifest.yaml \
+  --zap-report-json /app/reports/zap-report.json \
+  --zap-report-html /app/reports/zap-report.html
 
 # Self-signed or internal HTTPS
 python src/vapt.py --target https://internal.example.com --insecure
+```
+
+**Unit tests** (parsers; requires repo mounted):
+
+```bash
+docker run --rm -v "$(pwd):/app" -w /app --entrypoint python argus-scan:latest tests/test_argus_parsing.py -v
 ```
 
 ---
 
 ## 📊 Reporting
 
-Reports are written under the directory given by `--output` (default: `reports/`).
+Reports are written under **`--output`/`<site-slug>`/`<scan-timestamp>`/** (default: `reports/<hostname>/<YYYYMMDD_HHMMSS>/`). The scan start time is fixed when the run begins. Parallel stages (**`--parallel`**) write live logs under **`logs/`** in that same folder (`port_scan.log`, `header_scan.log`, `ssl_scan.log`, `nikto.log`, `nuclei.log`) while the console shows a short status table instead of streaming tool output.
 
 | Type | File pattern | Purpose |
 |------|--------------|--------|
-| **HTML** | `vapt_report_<target>_<YYYYMMDD_HHMMSS>.html` | "Intelligence Dossier" aesthetic dashboard with dark/light mode toggle. |
-| **Markdown** | `vapt_report_<target>_<YYYYMMDD_HHMMSS>.md` | Technical summary and raw module output in collapsible sections. |
+| **HTML** | `.../<site-slug>/<ts>/vapt_report_<target-slug>_<ts>.html` | "Intelligence Dossier" aesthetic dashboard with dark/light mode toggle. |
+| **Markdown** | Same directory, `.md` | Technical summary and raw module output in collapsible sections. |
 
 Both include:
 
 - Security score (0–100) and grade (A–F)
 - Severity counts (CRITICAL, HIGH, MEDIUM, LOW, INFO)
 - Per-finding description, current state, and recommendation
-- **Nuclei scan mode:** whether Nuclei ran **with** a `--nuclei-secret-file` (authenticated Nuclei) or **without**, or Nuclei was **not** run (no `--full`). Other scan stages (port, headers, SSL, Nikto) are always unauthenticated.
-- Raw details for headers, ports, and (when run) Nikto/Nuclei output
+- **Nuclei scan mode:** whether Nuclei ran **with** a `--nuclei-secret-file` (authenticated Nuclei) or **without**, or Nuclei was **not** run (no `--full`). Other scan stages (port, headers, SSL, Nikto) are always unauthenticated. With `--site-manifest`, the banner notes how many URLs were passed to Nuclei.
+- **Score composition:** The numeric score reflects structured findings from headers, SSL, ports, **parsed Nuclei JSONL**, and optional **parsed ZAP JSON**. **Nikto** output remains in raw sections only (not scored). See [EXTENDED_SCANNING.md](EXTENDED_SCANNING.md).
+- Raw details for headers, ports, and (when run) Nikto/Nuclei/ZAP output
 
 The CLI scan summary prints the same Nuclei mode line.
 
@@ -269,8 +368,9 @@ The included `.gitlab-ci.yml` is meant for self-hosted runners with Docker avail
 2. **Port scan:** Nmap fast scan (`-F -sV`) on the resolved IP. Open ports are listed; known risky ports (e.g. 21, 23, 3389, 445, 3306) generate findings.
 3. **Header scan:** HTTP GET to the target (scheme added if missing). Presence of security headers is checked; missing ones are reported with severity and remediation.
 4. **SSL scan:** Connection to port 443; certificate expiry and basic validity are checked.
-5. **Full scan (optional):** Runs Nikto and Nuclei with fixed tuning/options. Target and hostname are shell-quoted before use to reduce injection risk.
-6. **Reporting:** Aggregates findings, computes score and grade, then writes CLI summary, Markdown, and HTML.
+5. **Full scan (optional):** Runs Nikto (`-Tuning 123b`) and Nuclei. Nuclei writes **JSONL** via `-jle`; results are **parsed** into scored findings. With **`--site-manifest`**, Nuclei uses **`-list`** against a generated URL file instead of only `-u <target>`.
+6. **Optional ZAP ingestion:** If **`--zap-report-json`** points to a ZAP traditional JSON file, alerts are aggregated and merged into the same findings list for scoring.
+7. **Reporting:** Aggregates findings, computes score and grade, then writes CLI summary, Markdown, and HTML.
 
 ---
 
@@ -285,12 +385,16 @@ The included `.gitlab-ci.yml` is meant for self-hosted runners with Docker avail
 | **No or empty reports** | Confirm `--output` is writable and that the run completed (no early exit). Check the path reported in the “HTML report saved to” message. |
 | **Cookie validation failed after capture** | The secret file may still be written; fix the session, point `AUTH_SCAN_VALIDATE_URL` at a path that distinguishes anonymous vs logged-in (after redirects), or set `AUTH_SCAN_SKIP_VALIDATE=1`. See messages from `capture_cookies_cdp.py` for details. |
 | **`auth_scan_chrome.sh` shows usage with no URL** | Pass the start URL as the first argument **or** `export SCAN_TARGET=...` before running the script. |
+| **Site manifest has no effect** | Nuclei only runs with **`--full`**. Without `--full`, Argus warns and skips Nuclei. |
+| **ZAP findings missing from the score** | Ensure **`--zap-report-json`** points to an existing file (e.g. under `reports/`). HTML is optional and not parsed. |
+| **Docker image name mismatch** | Use the same tag you built (e.g. `docker build -t argus-scan .` → `argus-scan:latest`). |
+| **Parallel job table appears only after Ctrl+C** | Often **non-TTY** stdout (Docker logs, some IDE terminals): Rich `Live` buffers. Argus **reprints the table every ~1s** in that case. In a real TTY, `Live` uses **`screen=False`** so the table updates inline. |
 
 ---
 
 ## 🔮 Future Roadmap
 
-- **Deep fuzzing:** Integration with directory brute-forcing tools.
+- **Deep fuzzing:** Integration with directory brute-forcing tools (beyond curated URL manifests and ZAP baseline).
 - **Authentication:** Broader options beyond Nuclei Secret Files (for example API tokens or custom headers without Chrome).
 - **API security:** Dedicated checks for REST/GraphQL endpoints.
 

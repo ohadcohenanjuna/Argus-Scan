@@ -31,6 +31,9 @@ RUN curl -L https://github.com/projectdiscovery/nuclei/releases/download/v3.2.0/
     && rm nuclei.zip \
     && nuclei -version
 
+# Community templates (~hundreds of MB): bake in at build so scans do not download on first run.
+RUN nuclei -update-templates
+
 # Set work directory
 WORKDIR /app
 

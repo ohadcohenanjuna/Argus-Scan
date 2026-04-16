@@ -179,11 +179,12 @@ class SSLScanner(ScannerModule):
              return {"valid": False, "error": str(e), "findings": [fify(f) for f in self.findings]}
 
 class ToolScanner(ScannerModule):
-    def __init__(self, target, tool_name, command_template, verbose=False):
+    def __init__(self, target, tool_name, command_template, verbose=False, log_file=None):
         super().__init__(target)
         self.tool_name = tool_name
         self.command_template = command_template
         self.verbose = verbose
+        self.log_file = log_file  # if set, stream tool stdout here instead of printing
 
     def check_installed(self):
         return shutil.which(self.tool_name) is not None
@@ -203,10 +204,16 @@ class ToolScanner(ScannerModule):
         except (ValueError, TypeError):
             return {"error": "Invalid target or hostname for command", "valid": False}
         cmd = self.command_template.format(target=safe_target, hostname=safe_hostname)
-        
-        if self.verbose:
+
+        log_fp = None
+        if self.log_file:
+            # Stream subprocess stdout line-by-line (not tee). Flush each line so tail -f sees output during long scans.
+            log_fp = open(self.log_file, "w", encoding="utf-8", errors="replace")
+            log_fp.write(f"command: {cmd}\n---\n")
+            log_fp.flush()
+        elif self.verbose:
             print(f"  [Tool] Running: {cmd}")
-        
+
         try:
             # interactive output streaming
             process = subprocess.Popen(
@@ -228,24 +235,49 @@ class ToolScanner(ScannerModule):
                 if line_clean:
                     # Strip ANSI codes for clean logs
                     line_no_ansi = ansi_escape.sub('', line_clean)
-                    if self.verbose:
+                    if log_fp:
+                        log_fp.write(line_no_ansi + "\n")
+                        log_fp.flush()
+                    elif self.verbose:
                         print(f"  [Tool] {line_no_ansi}")
                     output_lines.append(line_no_ansi)
             
             process.wait()
+            if log_fp:
+                log_fp.write(f"---\nexit code: {process.returncode}\n")
+                log_fp.flush()
+                log_fp.close()
+                log_fp = None
             full_output = "\n".join(output_lines)
-            
+
+            valid = True
+            # Nikto exit codes are not reliable (non-zero may mean findings); detect abandoned scans in output.
+            if self.tool_name == "nikto" and full_output:
+                lo = full_output.lower()
+                if "error limit (" in lo and "giving up" in lo:
+                    valid = False
+
             # Naive findings based on output size or keywords could be added here
             # For now, tool findings are generic INFO unless parsed
             return {
-                "output": full_output, 
-                "error_output": "", # Captured in stdout/output
+                "output": full_output,
+                "error_output": "",  # Captured in stdout/output
                 "return_code": process.returncode,
                 "findings": [],
-                "valid": True
+                "valid": valid,
             }
         except Exception as e:
-            print(f"ERROR executing tool: {e}")
+            err = f"ERROR executing tool: {e}"
+            if log_fp:
+                try:
+                    log_fp.write(err + "\n")
+                finally:
+                    log_fp.close()
+            elif self.log_file:
+                with open(self.log_file, "a", encoding="utf-8", errors="replace") as lf:
+                    lf.write(err + "\n")
+            else:
+                print(err)
             return {"error": str(e), "valid": False}
 
 def fify(finding):

@@ -821,6 +821,26 @@
                 </div>
             </details>
             {% endif %}
+
+            {% if results.ZAPScanner %}
+            <details>
+                <summary>OWASP ZAP (DAST)</summary>
+                <div class="details-content">
+                    {% if results.ZAPScanner.html_path %}
+                    <p style="font-family: var(--font-mono); margin-bottom: 12px;">
+                        HTML report file: <strong>{{ results.ZAPScanner.html_path }}</strong>
+                        {% if results.ZAPScanner.html_basename %}
+                        — open alongside this dossier: <strong>{{ results.ZAPScanner.html_basename }}</strong>
+                        {% endif %}
+                    </p>
+                    {% endif %}
+                    {% if results.ZAPScanner.json_path %}
+                    <p style="font-family: var(--font-mono); margin-bottom: 12px;">JSON report: <strong>{{ results.ZAPScanner.json_path }}</strong></p>
+                    {% endif %}
+                    <div class="code-block" style="margin: 0;">{{ results.ZAPScanner.output }}</div>
+                </div>
+            </details>
+            {% endif %}
         </section>
 
         <!-- FOOTER -->
