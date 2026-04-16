@@ -44,6 +44,9 @@ reports/*.md
 # Test templates (mockups - not needed in production)
 test-templates/
 
+# Local site manifests (copy from examples/site-manifest.example.yaml)
+sites/
+
 # Logs
 *.log
 
