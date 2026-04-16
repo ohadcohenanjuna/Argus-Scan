@@ -31,7 +31,7 @@ def default_sigint_handler(sig, frame):
 def main():
     signal.signal(signal.SIGINT, default_sigint_handler)
     
-    parser = argparse.ArgumentParser(description="AutoVAPT - Automated Vulnerability Assessment Tool")
+    parser = argparse.ArgumentParser(description="Argus-Scan - Automated Vulnerability Assessment Tool")
     parser.add_argument("--target", required=True, help="Target URL or IP address")
     parser.add_argument("--output", default="reports", help="Output directory for reports")
     parser.add_argument("--full", action="store_true", help="Run comprehensive/long scans (Nikto, Nuclei)")

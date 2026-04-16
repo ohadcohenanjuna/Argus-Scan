@@ -91,7 +91,7 @@ class Reporter:
         return "F", "red"
 
     def print_header(self):
-        console.print(Panel(f"[bold blue]AutoVAPT v2.0[/bold blue]\nTarget: [green]{self.target}[/green]\nTime: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", expand=False))
+        console.print(Panel(f"[bold blue]Argus-Scan[/bold blue]\nTarget: [green]{self.target}[/green]\nTime: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", expand=False))
 
     def print_status(self, message, style="bold white"):
         console.print(f"[{style}]{message}[/{style}]")

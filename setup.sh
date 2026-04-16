@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# AutoVAPT Setup Script (Lightweight)
+# Argus-Scan Setup Script (Lightweight)
 # Sets up Python environment and checks for system dependencies.
 
 # Colors
@@ -20,7 +20,7 @@ check_command() {
 }
 
 echo -e "${GREEN}======================================${NC}"
-echo -e "${GREEN}    AutoVAPT Environment Setup        ${NC}"
+echo -e "${GREEN}    Argus-Scan Environment Setup        ${NC}"
 echo -e "${GREEN}======================================${NC}"
 echo ""
 
@@ -116,7 +116,7 @@ fi
 # --- Summary ---
 echo ""
 echo -e "${GREEN}Setup Complete!${NC}"
-echo -e "To start using AutoVAPT:"
+echo -e "To start using Argus-Scan:"
 echo -e "  1. ${YELLOW}source venv/bin/activate${NC}"
 echo -e "${YELLOW}    python src/vapt.py --target <target>${NC}"
 echo ""
